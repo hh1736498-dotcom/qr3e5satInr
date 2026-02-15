@@ -1,1 +1,99 @@
-<h1>hello<h1>
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>YouTube 時間帯切替</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 16px; }
+    .wrap { max-width: 960px; margin: 0 auto; }
+    .player { position: relative; width: 100%; padding-top: 56.25%; } /* 16:9 */
+    iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+    .note { margin-top: 8px; opacity: 0.8; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="player">
+      <iframe id="yt" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+    </div>
+    <div class="note" id="note"></div>
+  </div>
+
+<script>
+  // ▼ここを差し替え
+  const DAY_VIDEO_ID   = "https://www.youtube.com/watch?v=eqq67tOCMWg"; // 06:00-18:00 に流す動画
+  const NIGHT_VIDEO_ID = "https://www.youtube.com/watch?v=WvHgC5OL2Gc"; // 18:00-06:00 に流す動画
+
+  // 日本はUTC+9（DSTなし）なので「UTCに+9時間」換算でJSTを扱う
+  const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+  function jstNow() {
+    return new Date(Date.now() + JST_OFFSET_MS);
+  }
+
+  function isNightJst(hour) {
+    // 18:00-06:00
+    return (hour >= 18) || (hour < 6);
+  }
+
+  function pickVideoId() {
+    const d = jstNow();
+    const hour = d.getUTCHours(); // JST時刻の「時」
+    return isNightJst(hour) ? NIGHT_VIDEO_ID : DAY_VIDEO_ID;
+  }
+
+  function buildEmbedUrl(videoId) {
+    // player parameters: autoplay, mute, playsinline 等（必要に応じて調整）:contentReference[oaicite:2]{index=2}
+    const params = new URLSearchParams({
+      autoplay: "1",
+      mute: "1",          // 自動再生がブロックされにくい
+      playsinline: "1",
+      rel: "0"
+    });
+    // プライバシー重視なら nocookie ドメインも可
+    return `https://www.youtube-nocookie.com/embed/${videoId}?${params.toString()}`;
+  }
+
+  function setVideo(videoId) {
+    const iframe = document.getElementById("yt");
+    iframe.src = buildEmbedUrl(videoId);
+    const d = jstNow();
+    const hour = d.getUTCHours().toString().padStart(2, "0");
+    const min  = d.getUTCMinutes().toString().padStart(2, "0");
+    document.getElementById("note").textContent =
+      `JST ${hour}:${min} → ${isNightJst(d.getUTCHours()) ? "夜用" : "昼用"}動画を表示中`;
+  }
+
+  function msUntilNextSwitch() {
+    const nowJst = jstNow();
+    const y = nowJst.getUTCFullYear();
+    const m = nowJst.getUTCMonth();     // 0-11
+    const d = nowJst.getUTCDate();
+    const h = nowJst.getUTCHours();
+
+    let targetHour = isNightJst(h) ? 6 : 18; // 次の切替は「夜→朝6時」 or 「昼→夕18時」
+    let addDays = 0;
+
+    // 夜帯のうち、18-23時なら次は翌朝6時
+    if (isNightJst(h) && h >= 18) addDays = 1;
+
+    // JSTの「次の切替時刻」をUTCタイムスタンプに変換
+    const targetJstAsUtc = Date.UTC(y, m, d + addDays, targetHour, 0, 0);
+    const targetUtc = targetJstAsUtc - JST_OFFSET_MS;
+
+    return Math.max(0, targetUtc - Date.now());
+  }
+
+  // 初期表示
+  setVideo(pickVideoId());
+
+  // 境界(06:00/18:00 JST)で自動的に切替（念のため+2秒）
+  setTimeout(() => {
+    setVideo(pickVideoId());
+    // 次回以降も回すなら interval ではなく再帰 setTimeout が安全
+    setTimeout(arguments.callee, msUntilNextSwitch() + 2000);
+  }, msUntilNextSwitch() + 2000);
+</script>
+</body>
+</html>
