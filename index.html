@@ -1,1 +1,118 @@
-<h1>hello<h1>
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pomodoro</title>
+<style>
+  body{font-family:system-ui,sans-serif;margin:16px;max-width:520px}
+  #t{font-size:56px;letter-spacing:1px;margin:8px 0}
+  button,input{font:inherit;padding:.5em .7em;margin:.2em}
+  input{width:4.2em}
+  .row{display:flex;flex-wrap:wrap;align-items:center;gap:.3em}
+  #m{opacity:.75}
+</style>
+
+<div class="row"><b id="mode">WORK</b><span id="m"></span></div>
+<div id="t">25:00</div>
+
+<div class="row">
+  <button id="start">Start</button>
+  <button id="reset">Reset</button>
+  <button id="skip">Skip</button>
+  <button id="test">Sound Test</button>
+</div>
+
+<div class="row">
+  Work <input id="w" type="number" min="1" value="25"> min
+  Break <input id="b" type="number" min="1" value="5"> min
+</div>
+
+<script>
+let isWork=true, running=false, endAt=0, left=25*60, timer=0;
+const $=id=>document.getElementById(id);
+const pad=n=>String(n).padStart(2,"0");
+
+// ---- sound (unlock + multi beep) ----
+let AC=null, unlocked=false;
+function ensureAC(){
+  if(AC) return true;
+  try{ AC=new (window.AudioContext||window.webkitAudioContext)(); return true; }
+  catch(e){ return false; }
+}
+async function unlockAudio(){
+  if(unlocked) return true;
+  if(!ensureAC()) return false;
+  try{
+    await AC.resume?.();
+    // ほぼ無音を一瞬鳴らして「音OK」状態にする
+    const o=AC.createOscillator(), g=AC.createGain();
+    g.gain.value=0.0001; o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime+0.01);
+    unlocked=true;
+    return true;
+  }catch(e){ return false; }
+}
+function beepOnce(freq=880, ms=180, vol=0.06){
+  if(!AC) return;
+  try{
+    const o=AC.createOscillator(), g=AC.createGain();
+    o.type="sine"; o.frequency.value=freq;
+    g.gain.value=vol;
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + ms/1000);
+  }catch(e){}
+}
+function beep3(){
+  // 3回：ピッピッピ
+  beepOnce(880,160); setTimeout(()=>beepOnce(880,160),220); setTimeout(()=>beepOnce(880,160),440);
+}
+// ページ復帰時に再開（止まりにくく）
+document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) AC?.resume?.(); });
+// 最初のクリック/タップでも解除できるように
+document.addEventListener("pointerdown", unlockAudio, {once:true});
+// ------------------------------
+
+function setLeft(sec){ left=Math.max(0,sec|0); render(); }
+function durWork(){ return Math.max(1, +$("w").value||25)*60; }
+function durBreak(){ return Math.max(1, +$("b").value||5)*60; }
+
+function render(){
+  $("mode").textContent = isWork ? "WORK" : "BREAK";
+  $("t").textContent = pad(left/60|0)+":"+pad(left%60);
+  $("start").textContent = running ? "Pause" : "Start";
+  document.title = $("t").textContent+" "+$("mode").textContent;
+}
+
+function swap(autostart){
+  clearInterval(timer); running=false;
+  isWork=!isWork; setLeft(isWork?durWork():durBreak());
+  if(autostart) start(); else render();
+}
+
+function tick(){
+  setLeft(Math.ceil((endAt-Date.now())/1000));
+  if(left<=0){ beep3(); swap(true); }
+}
+
+async function start(){
+  await unlockAudio();
+  // 解除が成功していれば、ここで小さく鳴らして「鳴る状態」を固める
+  if(unlocked) beepOnce(660,60,0.02);
+
+  if(running){ // pause
+    running=false; clearInterval(timer);
+    setLeft(Math.ceil((endAt-Date.now())/1000)); render(); return;
+  }
+  running=true; endAt=Date.now()+left*1000;
+  tick(); timer=setInterval(tick,250); render();
+}
+
+function reset(){
+  clearInterval(timer); running=false;
+  setLeft(isWork?durWork():durBreak()); render();
+}
+
+$("start").onclick=start;
+$("reset").onclick=reset;
+$("skip").onclick=()=>swap(false);
+$("test").onclick=async()=>{ await unlockAudio(); if(unlocked) beep3(); };
+$("w").onchange=()=>$("b").onchange=reset;
+render();
+</script>
